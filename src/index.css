@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --rail-bg: #060e1a;
+  --rail-panel: #0a1628;
+  --rail-border: #1a3a5c;
+  --rail-accent: #00d4ff;
+  --rail-green: #00ff88;
+  --rail-orange: #ff8800;
+  --rail-red: #ff4444;
+  --rail-purple: #8b5cf6;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--rail-bg);
+  color: white;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.bg-rail-bg   { background-color: var(--rail-bg); }
+.bg-rail-panel { background-color: var(--rail-panel); }
+
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: #0a1628; }
+::-webkit-scrollbar-thumb { background: #1a3a5c; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #00d4ff44; }
+
+/* Animations */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 4px rgba(0,212,255,0.3); }
+  50%       { box-shadow: 0 0 12px rgba(0,212,255,0.7); }
+}
+@keyframes train-move {
+  0%   { stroke-dashoffset: 100; }
+  100% { stroke-dashoffset: 0; }
+}
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+@keyframes ticker {
+  0%   { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+.animate-fadeInUp  { animation: fadeInUp 0.4s ease both; }
+.animate-shimmer   { background: linear-gradient(90deg,transparent,rgba(0,212,255,0.1),transparent); background-size: 200%; animation: shimmer 2s infinite; }
+.animate-ticker    { animation: ticker 30s linear infinite; }
+.animate-spin-slow { animation: spin-slow 8s linear infinite; }
+.animate-blink     { animation: blink 1.5s ease-in-out infinite; }
+.pulse-glow        { animation: pulse-glow 2s ease-in-out infinite; }
+
+/* Glass panel */
+.glass {
+  background: rgba(10,22,40,0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(26,58,92,0.6);
+}
+
+/* Recharts override */
+.recharts-tooltip-wrapper { z-index: 9999 !important; }
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line { stroke: rgba(26,58,92,0.5) !important; }
