@@ -6,9 +6,9 @@ import {
   MapPin, Gauge, Calendar, ArrowRight, Filter,
 } from "lucide-react";
 import {
-  delhiStations, delhiRoutes, delhiTrains,
-  routeSegments, liveAlerts, networkStats,
-} from "../data/delhiRailwayData";
+  indiaStations, indiaRoutes, indiaTrains,
+  routeSegments, liveAlerts, networkStats, indiaOutlinePath,
+} from "../data/indiaMapData";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 function lerp(a, b, t) { return a + (b - a) * t; }
@@ -121,7 +121,7 @@ function LiveClock() {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function RailwayMap() {
   const [trainPositions, setTrainPositions] = useState(
-    delhiTrains.map((t) => ({ ...t }))
+    indiaTrains.map((t) => ({ ...t }))
   );
   const [selectedStation, setSelectedStation] = useState(null);
   const [selectedTrain,   setSelectedTrain]   = useState(null);
@@ -211,13 +211,13 @@ export default function RailwayMap() {
         <div>
           <h1 className="text-lg font-bold text-white flex items-center gap-2">
             <Map size={18} className="text-rail-accent" />
-            New Delhi Railway Network
+            Indian Railway Network
             <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rail-accent/10 text-rail-accent border border-rail-accent/20">
               LIVE
             </span>
           </h1>
           <p className="text-xs text-rail-muted mt-0.5">
-            Real-time train positions · {delhiStations.length} stations · {delhiRoutes.length} corridors · {delhiTrains.length} trains
+            Real-time train positions · {indiaStations.length} stations · {indiaRoutes.length} corridors · {indiaTrains.length} trains
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -339,7 +339,7 @@ export default function RailwayMap() {
             <span className="w-px h-3 bg-rail-border" />
             <span className="text-rail-green">{filteredTrains.length} TRAINS</span>
             <span className="w-px h-3 bg-rail-border" />
-            <span>{delhiStations.length} STATIONS</span>
+            <span>{indiaStations.length} STATIONS</span>
             <span className="w-px h-3 bg-rail-border" />
             <span className="text-rail-muted">Scroll to zoom · Drag to pan</span>
           </div>
@@ -347,7 +347,7 @@ export default function RailwayMap() {
           {/* SVG MAP */}
           <svg
             ref={svgRef}
-            viewBox="0 0 200 180"
+            viewBox="0 0 400 420"
             className="w-full h-full"
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
@@ -370,7 +370,7 @@ export default function RailwayMap() {
                 <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
               </filter>
               {/* Train marker arrow */}
-              {delhiRoutes.map((r) => (
+              {indiaRoutes.map((r) => (
                 <marker key={r.id} id={`arrow-${r.id}`} viewBox="0 0 6 6" refX="3" refY="3"
                   markerWidth="4" markerHeight="4" orient="auto">
                   <path d="M0,0 L6,3 L0,6 Z" fill={r.color} opacity="0.7" />
@@ -379,30 +379,39 @@ export default function RailwayMap() {
             </defs>
 
             {/* Background */}
-            <rect width="200" height="180" fill="#050d1a" />
-            <rect width="200" height="180" fill="url(#ndgrid)" />
+            <rect width="400" height="420" fill="#050d1a" />
+            <rect width="400" height="420" fill="url(#ndgrid)" />
 
-            {/* Yamuna River (decorative) */}
+            {/* India outline */}
             <path
-              d="M 120,10 C 118,30 122,50 118,70 C 114,90 116,110 112,130 C 108,150 110,165 108,175"
-              fill="none"
+              d={indiaOutlinePath}
+              fill="#0a1628"
               stroke="#1a3a5c"
-              strokeWidth="3"
-              opacity="0.5"
+              strokeWidth="1.2"
+              opacity="0.9"
             />
-            <text x="122" y="85" fontSize="3.5" fill="#1a4a7a" opacity="0.7" transform="rotate(5,122,85)">
-              Yamuna River
-            </text>
+            <path
+              d={indiaOutlinePath}
+              fill="none"
+              stroke="#00d4ff"
+              strokeWidth="0.4"
+              opacity="0.15"
+            />
 
-            {/* City zone labels */}
+            {/* Ocean label */}
+            <text x="30"  y="390" fontSize="4.5" fill="#1a4a7a" opacity="0.3" fontFamily="monospace" fontWeight="bold">ARABIAN SEA</text>
+            <text x="280" y="380" fontSize="4.5" fill="#1a4a7a" opacity="0.3" fontFamily="monospace" fontWeight="bold">BAY OF BENGAL</text>
+
+            {/* Region labels */}
             {[
-              { label: "OLD DELHI",      x: 72,  y: 52,  opacity: 0.12 },
-              { label: "NEW DELHI",      x: 88,  y: 80,  opacity: 0.12 },
-              { label: "EAST DELHI",     x: 130, y: 72,  opacity: 0.10 },
-              { label: "SOUTH DELHI",    x: 88,  y: 105, opacity: 0.10 },
-              { label: "GURGAON",        x: 58,  y: 115, opacity: 0.10 },
-              { label: "NOIDA / GZB",    x: 145, y: 72,  opacity: 0.10 },
-              { label: "HARYANA",        x: 42,  y: 55,  opacity: 0.10 },
+              { label: "NORTH INDIA",     x: 140, y: 70,  opacity: 0.10 },
+              { label: "WEST INDIA",      x: 62,  y: 250, opacity: 0.10 },
+              { label: "EAST INDIA",      x: 270, y: 200, opacity: 0.10 },
+              { label: "SOUTH INDIA",     x: 130, y: 370, opacity: 0.10 },
+              { label: "CENTRAL INDIA",   x: 145, y: 230, opacity: 0.08 },
+              { label: "RAJASTHAN",       x: 80,  y: 150, opacity: 0.08 },
+              { label: "DECCAN PLATEAU",  x: 150, y: 315, opacity: 0.08 },
+              { label: "NORTHEAST",       x: 315, y: 145, opacity: 0.08 },
             ].map(({ label, x, y, opacity }) => (
               <text key={label} x={x} y={y} fontSize="5" fill="#00d4ff"
                 opacity={opacity} textAnchor="middle" fontFamily="monospace" fontWeight="bold">
@@ -411,7 +420,7 @@ export default function RailwayMap() {
             ))}
 
             {/* ── ROUTES ─────────────────────────────────────────────── */}
-            {showRoutes && delhiRoutes.map((route) => {
+            {showRoutes && indiaRoutes.map((route) => {
               const segs = routeSegments[route.id];
               if (!segs || segs.length < 2) return null;
               const pts = segs.map((s) => `${s.x},${s.y}`).join(" ");
@@ -475,7 +484,7 @@ export default function RailwayMap() {
             })}
 
             {/* ── STATIONS ───────────────────────────────────────────── */}
-            {delhiStations.map((station) => {
+            {indiaStations.map((station) => {
               const color = STATUS_COLOR[station.status] || "#00ff88";
               const isSelected = selectedStation?.id === station.id;
               const isTerminal = station.type === "terminal";
@@ -582,7 +591,7 @@ export default function RailwayMap() {
               const angle = getTrainAngle(train.route, train.progress);
               const isSelected = selectedTrain?.id === train.id;
               const color = TRAIN_STATUS_COLOR[train.status] || "#00ff88";
-              const route = delhiRoutes.find((r) => r.id === train.route);
+              const route = indiaRoutes.find((r) => r.id === train.route);
               return (
                 <g
                   key={train.id}
@@ -648,22 +657,22 @@ export default function RailwayMap() {
             })}
 
             {/* ── COMPASS ────────────────────────────────────────────── */}
-            <g transform="translate(185,15)">
-              <circle r="6" fill="#050d1a" stroke="#00d4ff22" strokeWidth="0.5" />
-              <text x="0" y="-3" fontSize="3" fill="#00d4ff" textAnchor="middle" opacity="0.8">N</text>
-              <text x="0" y="5"  fontSize="3" fill="#00d4ff55" textAnchor="middle">S</text>
-              <text x="-4" y="1" fontSize="3" fill="#00d4ff55" textAnchor="middle">W</text>
-              <text x="4"  y="1" fontSize="3" fill="#00d4ff55" textAnchor="middle">E</text>
-              <line x1="0" y1="-1.5" x2="0" y2="-4.5" stroke="#00d4ff" strokeWidth="0.5" />
-              <polygon points="0,-4.5 -0.8,-1.5 0.8,-1.5" fill="#00d4ff" opacity="0.8" />
+            <g transform="translate(375,25)">
+              <circle r="8" fill="#050d1a" stroke="#00d4ff22" strokeWidth="0.5" />
+              <text x="0" y="-4" fontSize="4" fill="#00d4ff" textAnchor="middle" opacity="0.8">N</text>
+              <text x="0" y="7"  fontSize="4" fill="#00d4ff55" textAnchor="middle">S</text>
+              <text x="-5" y="1.5" fontSize="4" fill="#00d4ff55" textAnchor="middle">W</text>
+              <text x="5"  y="1.5" fontSize="4" fill="#00d4ff55" textAnchor="middle">E</text>
+              <line x1="0" y1="-2" x2="0" y2="-6" stroke="#00d4ff" strokeWidth="0.5" />
+              <polygon points="0,-6 -1,-2 1,-2" fill="#00d4ff" opacity="0.8" />
             </g>
 
             {/* ── SCALE BAR ──────────────────────────────────────────── */}
-            <g transform="translate(10,170)">
-              <line x1="0" y1="0" x2="20" y2="0" stroke="#00d4ff" strokeWidth="0.5" opacity="0.5" />
-              <line x1="0" y1="-1" x2="0" y2="1" stroke="#00d4ff" strokeWidth="0.5" opacity="0.5" />
-              <line x1="20" y1="-1" x2="20" y2="1" stroke="#00d4ff" strokeWidth="0.5" opacity="0.5" />
-              <text x="10" y="-2" fontSize="2.5" fill="#00d4ff" textAnchor="middle" opacity="0.5">~20 km</text>
+            <g transform="translate(15,400)">
+              <line x1="0" y1="0" x2="30" y2="0" stroke="#00d4ff" strokeWidth="0.5" opacity="0.5" />
+              <line x1="0" y1="-1.5" x2="0" y2="1.5" stroke="#00d4ff" strokeWidth="0.5" opacity="0.5" />
+              <line x1="30" y1="-1.5" x2="30" y2="1.5" stroke="#00d4ff" strokeWidth="0.5" opacity="0.5" />
+              <text x="15" y="-3" fontSize="3" fill="#00d4ff" textAnchor="middle" opacity="0.5">~500 km</text>
             </g>
           </svg>
         </div>
@@ -862,7 +871,7 @@ export default function RailwayMap() {
           <div className="panel-border rounded-xl p-4 flex-shrink-0">
             <h3 className="text-xs font-semibold text-white mb-3 font-mono">CORRIDORS</h3>
             <div className="space-y-1.5">
-              {delhiRoutes.map((route) => {
+              {indiaRoutes.map((route) => {
                 const segs = routeSegments[route.id] || [];
                 const trainCount = trainPositions.filter((t) => t.route === route.id).length;
                 return (
