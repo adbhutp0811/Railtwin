@@ -1,41 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
-  Map, Train, Info, Layers, ZoomIn, ZoomOut, RefreshCw,
+  Map, Train, Info, ZoomIn, ZoomOut, RefreshCw,
   AlertTriangle, Clock, Users, Activity, Navigation,
   Wifi, WifiOff, ChevronRight, X, Bell, TrendingUp,
-  MapPin, Gauge, Calendar, ArrowRight, Filter,
+  MapPin, Gauge, Calendar, ArrowRight, Filter, Layers,
 } from "lucide-react";
 import {
   indiaStations, indiaRoutes, indiaTrains,
-  routeSegments, liveAlerts, networkStats, indiaOutlinePath,
+  liveAlerts, networkStats,
 } from "../data/indiaMapData";
-
-// ─── helpers ──────────────────────────────────────────────────────────────────
-function lerp(a, b, t) { return a + (b - a) * t; }
-function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
-
-function getPositionOnRoute(routeId, progress) {
-  const segs = routeSegments[routeId];
-  if (!segs || segs.length < 2) return { x: 95, y: 72 };
-  const total = segs.length - 1;
-  const scaled = progress * total;
-  const idx = clamp(Math.floor(scaled), 0, total - 1);
-  const t = scaled - idx;
-  const a = segs[idx];
-  const b = segs[idx + 1] || segs[idx];
-  return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) };
-}
-
-function getTrainAngle(routeId, progress) {
-  const segs = routeSegments[routeId];
-  if (!segs || segs.length < 2) return 0;
-  const total = segs.length - 1;
-  const scaled = progress * total;
-  const idx = clamp(Math.floor(scaled), 0, total - 1);
-  const a = segs[idx];
-  const b = segs[idx + 1] || segs[idx];
-  return Math.atan2(b.y - a.y, b.x - a.x) * (180 / Math.PI);
-}
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 
 const STATUS_COLOR = {
   normal:    "#00ff88",
@@ -63,7 +38,33 @@ const ALERT_COLOR = {
   low:      "#00ff88",
 };
 
-// ─── mini badge ───────────────────────────────────────────────────────────────
+const stationMap = new Map(indiaStations.map((s) => [s.id, s]));
+
+function getRouteLatLngs(route) {
+  const ids = [route.from, ...(route.via || []), route.to];
+  return ids.map((id) => {
+    const s = stationMap.get(id);
+    return s ? [s.lat, s.lng] : null;
+  }).filter(Boolean);
+}
+
+function interp(a, b, t) { return a + (b - a) * t; }
+
+function getTrainLatLng(routeId, progress) {
+  const route = indiaRoutes.find((r) => r.id === routeId);
+  if (!route) return [22, 78];
+  const pts = getRouteLatLngs(route);
+  if (pts.length < 2) return pts[0] || [22, 78];
+  const total = pts.length - 1;
+  const scaled = progress * total;
+  const idx = Math.min(Math.floor(scaled), total - 1);
+  const t = scaled - idx;
+  return [
+    interp(pts[idx][0], pts[idx + 1][0], t),
+    interp(pts[idx][1], pts[idx + 1][1], t),
+  ];
+}
+
 function Badge({ label, color = "#00d4ff" }) {
   return (
     <span
@@ -75,7 +76,6 @@ function Badge({ label, color = "#00d4ff" }) {
   );
 }
 
-// ─── stat row ────────────────────────────────────────────────────────────────
 function StatRow({ label, value, color = "text-rail-text" }) {
   return (
     <div className="flex justify-between items-center py-0.5">
@@ -85,7 +85,6 @@ function StatRow({ label, value, color = "text-rail-text" }) {
   );
 }
 
-// ─── progress bar ─────────────────────────────────────────────────────────────
 function ProgressBar({ value, max, color }) {
   const pct = Math.round((value / max) * 100);
   const col = pct > 90 ? "#ff4444" : pct > 70 ? "#ffcc00" : "#00ff88";
@@ -102,7 +101,6 @@ function ProgressBar({ value, max, color }) {
   );
 }
 
-// ─── live clock ───────────────────────────────────────────────────────────────
 function LiveClock() {
   const [time, setTime] = useState(new Date());
   useEffect(() => {
@@ -116,51 +114,222 @@ function LiveClock() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN COMPONENT
-// ─────────────────────────────────────────────────────────────────────────────
 export default function RailwayMap() {
-  const [trainPositions, setTrainPositions] = useState(
-    indiaTrains.map((t) => ({ ...t }))
+  const [trainData, setTrainData] = useState(
+    indiaTrains.map((t) => ({ ...t, progress: Math.random() }))
   );
   const [selectedStation, setSelectedStation] = useState(null);
   const [selectedTrain,   setSelectedTrain]   = useState(null);
-  const [zoom,            setZoom]            = useState(1);
-  const [pan,             setPan]             = useState({ x: 0, y: 0 });
   const [showLabels,      setShowLabels]      = useState(true);
   const [showTrains,      setShowTrains]      = useState(true);
   const [showRoutes,      setShowRoutes]      = useState(true);
   const [filterType,      setFilterType]      = useState("all");
   const [alertIdx,        setAlertIdx]        = useState(0);
   const [lastUpdate,      setLastUpdate]      = useState(new Date());
-  const [isPanning,       setIsPanning]       = useState(false);
-  const [panStart,        setPanStart]        = useState({ x: 0, y: 0 });
   const [highlightRoute,  setHighlightRoute]  = useState(null);
-  const svgRef = useRef(null);
 
-  // ── live train movement ────────────────────────────────────────────────────
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const trainMarkersRef = useRef({});
+  const stationLayersRef = useRef({});
+  const routeLayersRef = useRef({});
+  const initializedRef = useRef(false);
+
+  const filteredTrains = filterType === "all"
+    ? trainData
+    : trainData.filter((t) => t.type.toLowerCase() === filterType);
+  const delayedCount = trainData.filter((t) => t.delay > 0).length;
+  const onTimeCount  = trainData.filter((t) => t.delay === 0).length;
+
+  // ── map init ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (initializedRef.current || !mapRef.current) return;
+    initializedRef.current = true;
+
+    const map = L.map(mapRef.current, {
+      center: [22.5, 78],
+      zoom: 5,
+      zoomControl: false,
+      attributionControl: false,
+      maxBounds: L.latLngBounds([5, 65], [38, 100]),
+      maxBoundsViscosity: 1,
+      minZoom: 4,
+      maxZoom: 10,
+    });
+    mapInstanceRef.current = map;
+
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      maxZoom: 19,
+    }).addTo(map);
+
+    const zoomControl = L.control.zoom({ position: "topright" });
+    zoomControl.addTo(map);
+
+    // ── stations ──────────────────────────────────────────────────────
+    indiaStations.forEach((s) => {
+      const color = STATUS_COLOR[s.status] || "#00ff88";
+      const isTerminal = s.type === "terminal";
+      const isJunction = s.type === "junction";
+      const r = isTerminal ? 6 : isJunction ? 5 : 4;
+
+      const icon = L.divIcon({
+        className: "",
+        html: `<div style="
+          position:relative;width:${r*2}px;height:${r*2}px;
+          display:flex;align-items:center;justify-content:center;
+        ">
+          <div style="
+            width:${r*2-2}px;height:${r*2-2}px;
+            border-radius:${isTerminal ? '2px' : '50%'};
+            background:${color};opacity:0.9;
+            border:1px solid ${color};
+            transform:${isTerminal ? 'rotate(45deg)' : 'none'};
+            box-shadow:0 0 4px ${color}66;
+          "></div>
+          <div style="
+            position:absolute;width:4px;height:4px;border-radius:50%;
+            background:#050d1a;opacity:0.9;
+          "></div>
+        </div>`,
+        iconSize: [r * 2, r * 2],
+        iconAnchor: [r, r],
+      });
+
+      const marker = L.marker([s.lat, s.lng], { icon })
+        .addTo(map)
+        .on("click", () => {
+          setSelectedStation((prev) => (prev?.id === s.id ? null : s));
+          setSelectedTrain(null);
+        });
+
+      if (s.status === "critical" || s.status === "congested") {
+        marker.getElement().classList.add("pulse-ring");
+      }
+
+      if (showLabels) {
+        const labelText = isTerminal
+          ? `<div style="font-size:9px;font-family:monospace;text-align:center;color:#c8d8f0;font-weight:${isTerminal?'bold':'normal'};line-height:1.2">${s.name}${isTerminal ? `<br><span style="color:${color};font-size:7px;opacity:0.7">[${s.shortName}]</span>` : ""}</div>`
+          : `<div style="font-size:8px;font-family:monospace;text-align:center;color:#c8d8f0">${s.name}</div>`;
+        const labelIcon = L.divIcon({
+          className: "",
+          html: labelText,
+          iconSize: [80, isTerminal ? 24 : 14],
+          iconAnchor: [40, -r - 4],
+        });
+        const labelMarker = L.marker([s.lat, s.lng], { icon: labelIcon, interactive: false }).addTo(map);
+        stationLayersRef.current[s.id] = { marker, label: labelMarker };
+      } else {
+        stationLayersRef.current[s.id] = { marker, label: null };
+      }
+    });
+
+    // ── routes ────────────────────────────────────────────────────────
+    indiaRoutes.forEach((route) => {
+      const pts = getRouteLatLngs(route);
+      if (pts.length < 2) return;
+
+      const polyline = L.polyline(pts, {
+        color: route.color,
+        weight: 1.2,
+        opacity: 0.75,
+        smoothFactor: 1,
+        dashArray: route.type === "ring" ? "8 4" : null,
+      }).addTo(map);
+
+      polyline.on("click", () => {
+        setHighlightRoute((prev) => (prev === route.id ? null : route.id));
+      });
+
+      routeLayersRef.current[route.id] = polyline;
+
+      // Route label at midpoint
+      if (showLabels && pts.length >= 2) {
+        const mid = Math.floor(pts.length / 2);
+        const p = pts[mid] || pts[0];
+        const labelIcon = L.divIcon({
+          className: "",
+          html: `<div style="font-size:7px;font-family:monospace;color:${route.color};opacity:0.8;background:#0a1628aa;padding:1px 3px;border-radius:2px;white-space:nowrap">${route.shortName}</div>`,
+          iconSize: [0, 0],
+          iconAnchor: [0, 0],
+        });
+        L.marker(p, { icon: labelIcon, interactive: false }).addTo(map);
+      }
+    });
+
+    // ── trains ────────────────────────────────────────────────────────
+    trainData.forEach((t) => {
+      const pos = getTrainLatLng(t.route, t.progress);
+      const color = TRAIN_STATUS_COLOR[t.status] || "#00ff88";
+      const icon = L.divIcon({
+        className: "",
+        html: `<div style="
+          width:8px;height:8px;border-radius:2px;
+          background:${color};opacity:0.92;
+          transform:rotate(45deg);
+          box-shadow:0 0 6px ${color}88,0 0 2px ${color};
+        "></div>`,
+        iconSize: [8, 8],
+        iconAnchor: [4, 4],
+      });
+      const marker = L.marker(pos, { icon })
+        .addTo(map)
+        .on("click", () => {
+          setSelectedTrain((prev) => (prev?.id === t.id ? null : { ...t }));
+          setSelectedStation(null);
+        });
+      trainMarkersRef.current[t.id] = marker;
+    });
+
+    return () => {
+      map.remove();
+      initializedRef.current = false;
+      trainMarkersRef.current = {};
+      stationLayersRef.current = {};
+      routeLayersRef.current = {};
+    };
+  }, []);
+
+  // ── label visibility toggle ──────────────────────────────────────────
+  useEffect(() => {
+    Object.values(stationLayersRef.current).forEach(({ label }) => {
+      if (label && mapInstanceRef.current) {
+        if (showLabels) label.addTo(mapInstanceRef.current);
+        else mapInstanceRef.current.removeLayer(label);
+      }
+    });
+  }, [showLabels]);
+
+  // ── highlight route ──────────────────────────────────────────────────
+  useEffect(() => {
+    Object.entries(routeLayersRef.current).forEach(([id, polyline]) => {
+      const isHL = highlightRoute === id;
+      polyline.setStyle({ weight: isHL ? 2.5 : 1.2, opacity: isHL ? 1 : 0.75 });
+      if (isHL) polyline.bringToFront();
+    });
+  }, [highlightRoute]);
+
+  // ── train movement loop ──────────────────────────────────────────────
   useEffect(() => {
     const interval = setInterval(() => {
-      setTrainPositions((prev) =>
+      setTrainData((prev) =>
         prev.map((t) => {
-          const segs = routeSegments[t.route];
-          if (!segs) return t;
           const speed = t.status === "stopped" ? 0
-            : t.status === "delayed" ? 0.0008
-            : 0.0014;
-          // randomise speed slightly for realism
+            : t.status === "delayed" ? 0.0008 : 0.0014;
           const jitter = (Math.random() - 0.5) * 0.0002;
           const newProgress = (t.progress + speed + jitter) % 1;
-          // occasionally nudge delay
           const delayDelta = Math.random() < 0.02
-            ? (Math.random() < 0.5 ? 1 : -1)
-            : 0;
+            ? (Math.random() < 0.5 ? 1 : -1) : 0;
           const newDelay = Math.max(0, t.delay + delayDelta);
-          const newStatus = newDelay > 10 ? "delayed"
-            : newDelay > 0 ? "delayed"
-            : "on-time";
+          const newStatus = newDelay > 0 ? "delayed" : "on-time";
           const newSpeed = t.status === "stopped" ? 0
             : Math.round(t.speed + (Math.random() - 0.5) * 4);
+
+          // Update Leaflet marker position
+          const marker = trainMarkersRef.current[t.id];
+          if (marker && mapInstanceRef.current) {
+            const pos = getTrainLatLng(t.route, newProgress);
+            marker.setLatLng(pos);
+          }
           return { ...t, progress: newProgress, delay: newDelay, status: newStatus, speed: newSpeed };
         })
       );
@@ -169,44 +338,36 @@ export default function RailwayMap() {
     return () => clearInterval(interval);
   }, []);
 
-  // ── rotate alert ticker ───────────────────────────────────────────────────
+  // ── alert ticker ─────────────────────────────────────────────────────
   useEffect(() => {
     const t = setInterval(() => setAlertIdx((i) => (i + 1) % liveAlerts.length), 4000);
     return () => clearInterval(t);
   }, []);
 
-  // ── pan handlers ─────────────────────────────────────────────────────────
-  const onMouseDown = useCallback((e) => {
-    if (e.target.closest(".no-pan")) return;
-    setIsPanning(true);
-    setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-  }, [pan]);
-  const onMouseMove = useCallback((e) => {
-    if (!isPanning) return;
-    setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
-  }, [isPanning, panStart]);
-  const onMouseUp = useCallback(() => setIsPanning(false), []);
-
-  // ── wheel zoom ────────────────────────────────────────────────────────────
-  const onWheel = useCallback((e) => {
-    e.preventDefault();
-    setZoom((z) => clamp(z - e.deltaY * 0.001, 0.5, 3));
-  }, []);
-
-  const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
-
-  // ── filtered trains ───────────────────────────────────────────────────────
-  const filteredTrains = filterType === "all"
-    ? trainPositions
-    : trainPositions.filter((t) => t.type.toLowerCase() === filterType);
-
-  const delayedCount = trainPositions.filter((t) => t.delay > 0).length;
-  const onTimeCount  = trainPositions.filter((t) => t.delay === 0).length;
+  // ── update train marker colors when filter changes ────────────────────
+  useEffect(() => {
+    filteredTrains.forEach((t) => {
+      const marker = trainMarkersRef.current[t.id];
+      if (!marker) return;
+      const color = TRAIN_STATUS_COLOR[t.status] || "#00ff88";
+      const el = marker.getElement();
+      if (el) {
+        const inner = el.querySelector("div");
+        if (inner) inner.style.background = color;
+      }
+    });
+    Object.entries(trainMarkersRef.current).forEach(([id, marker]) => {
+      const train = filteredTrains.find((t) => t.id === id);
+      if (!train && mapInstanceRef.current) {
+        mapInstanceRef.current.removeLayer(marker);
+      }
+    });
+  }, [filteredTrains]);
 
   return (
     <div className="flex flex-col h-full gap-3 max-w-screen-2xl mx-auto">
 
-      {/* ── TOP BAR ─────────────────────────────────────────────────────── */}
+      {/* ── TOP BAR ─────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-bold text-white flex items-center gap-2">
@@ -232,7 +393,7 @@ export default function RailwayMap() {
         </div>
       </div>
 
-      {/* ── ALERT TICKER ────────────────────────────────────────────────── */}
+      {/* ── ALERT TICKER ────────────────────────────────────────────── */}
       <div
         className="flex items-center gap-3 px-4 py-2 rounded-xl border overflow-hidden"
         style={{
@@ -258,7 +419,7 @@ export default function RailwayMap() {
         </div>
       </div>
 
-      {/* ── NETWORK KPIs ────────────────────────────────────────────────── */}
+      {/* ── NETWORK KPIs ────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
         {[
           { label: "Active Trains",    value: networkStats.activeTrains,                   color: "#00d4ff",  icon: Train },
@@ -279,45 +440,27 @@ export default function RailwayMap() {
         ))}
       </div>
 
-      {/* ── MAIN CONTENT ────────────────────────────────────────────────── */}
+      {/* ── MAIN CONTENT ────────────────────────────────────────────── */}
       <div className="flex gap-3 flex-1 min-h-0" style={{ height: "calc(100vh - 320px)", minHeight: 480 }}>
 
-        {/* ── MAP CANVAS ──────────────────────────────────────────────── */}
-        <div className="flex-1 panel-border rounded-xl overflow-hidden relative select-none"
-          style={{ cursor: isPanning ? "grabbing" : "grab" }}
-          onMouseDown={onMouseDown}
-          onMouseMove={onMouseMove}
-          onMouseUp={onMouseUp}
-          onMouseLeave={onMouseUp}
-          onWheel={onWheel}
-        >
+        {/* ── MAP ──────────────────────────────────────────────────── */}
+        <div className="flex-1 panel-border rounded-xl overflow-hidden relative">
+
           {/* Scan line */}
           <div className="absolute inset-0 pointer-events-none overflow-hidden z-10">
             <div className="scan-line" />
           </div>
 
           {/* Map controls */}
-          <div className="no-pan absolute top-3 right-3 z-20 flex flex-col gap-1.5">
-            <button onClick={() => setZoom((z) => clamp(z + 0.2, 0.5, 3))}
-              className="p-2 rounded-lg bg-rail-card border border-rail-border hover:border-rail-accent/40 text-rail-muted hover:text-rail-accent transition-colors">
-              <ZoomIn size={13} />
-            </button>
-            <button onClick={() => setZoom((z) => clamp(z - 0.2, 0.5, 3))}
-              className="p-2 rounded-lg bg-rail-card border border-rail-border hover:border-rail-accent/40 text-rail-muted hover:text-rail-accent transition-colors">
-              <ZoomOut size={13} />
-            </button>
-            <button onClick={resetView}
-              className="p-2 rounded-lg bg-rail-card border border-rail-border hover:border-rail-accent/40 text-rail-muted hover:text-rail-accent transition-colors">
-              <Navigation size={13} />
-            </button>
+          <div className="absolute top-3 right-3 z-20 flex flex-col gap-1.5">
             <button onClick={() => setShowLabels((v) => !v)}
-              className={`p-2 rounded-lg border transition-colors ${showLabels ? "bg-rail-accent/10 border-rail-accent/40 text-rail-accent" : "bg-rail-card border-rail-border text-rail-muted"}`}>
+              className={`p-2 rounded-lg border transition-colors ${showLabels ? "bg-rail-accent/10 border-rail-accent/40 text-rail-accent" : "bg-rail-card/80 border-rail-border text-rail-muted"}`}>
               <Layers size={13} />
             </button>
           </div>
 
           {/* Filter pills */}
-          <div className="no-pan absolute top-3 left-3 z-20 flex flex-wrap gap-1">
+          <div className="absolute top-3 left-3 z-20 flex flex-wrap gap-1">
             {["all", "rajdhani", "shatabdi", "duronto", "express", "mail", "passenger"].map((f) => (
               <button
                 key={f}
@@ -333,10 +476,8 @@ export default function RailwayMap() {
             ))}
           </div>
 
-          {/* Zoom + train count */}
-          <div className="no-pan absolute bottom-3 left-3 z-20 flex items-center gap-3 text-[10px] font-mono text-rail-muted bg-rail-card/90 px-3 py-1.5 rounded-lg border border-rail-border">
-            <span>ZOOM {Math.round(zoom * 100)}%</span>
-            <span className="w-px h-3 bg-rail-border" />
+          {/* Stats bar */}
+          <div className="absolute bottom-3 left-3 z-20 flex items-center gap-3 text-[10px] font-mono text-rail-muted bg-rail-card/90 px-3 py-1.5 rounded-lg border border-rail-border">
             <span className="text-rail-green">{filteredTrains.length} TRAINS</span>
             <span className="w-px h-3 bg-rail-border" />
             <span>{indiaStations.length} STATIONS</span>
@@ -344,340 +485,11 @@ export default function RailwayMap() {
             <span className="text-rail-muted">Scroll to zoom · Drag to pan</span>
           </div>
 
-          {/* SVG MAP */}
-          <svg
-            ref={svgRef}
-            viewBox="0 0 400 420"
-            className="w-full h-full"
-            style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              transformOrigin: "center",
-              transition: isPanning ? "none" : "transform 0.2s ease",
-            }}
-          >
-            <defs>
-              {/* Grid */}
-              <pattern id="ndgrid" width="10" height="10" patternUnits="userSpaceOnUse">
-                <path d="M 10 0 L 0 0 0 10" fill="none" stroke="rgba(0,212,255,0.04)" strokeWidth="0.3" />
-              </pattern>
-              {/* Glow filter */}
-              <filter id="glow">
-                <feGaussianBlur stdDeviation="1.5" result="blur" />
-                <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-              </filter>
-              <filter id="glow-strong">
-                <feGaussianBlur stdDeviation="2.5" result="blur" />
-                <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-              </filter>
-              {/* Train marker arrow */}
-              {indiaRoutes.map((r) => (
-                <marker key={r.id} id={`arrow-${r.id}`} viewBox="0 0 6 6" refX="3" refY="3"
-                  markerWidth="4" markerHeight="4" orient="auto">
-                  <path d="M0,0 L6,3 L0,6 Z" fill={r.color} opacity="0.7" />
-                </marker>
-              ))}
-            </defs>
-
-            {/* Background */}
-            <rect width="400" height="420" fill="#050d1a" />
-            <rect width="400" height="420" fill="url(#ndgrid)" />
-
-            {/* India outline */}
-            <path
-              d={indiaOutlinePath}
-              fill="#0a1628"
-              stroke="#1a3a5c"
-              strokeWidth="1.2"
-              opacity="0.9"
-            />
-            <path
-              d={indiaOutlinePath}
-              fill="none"
-              stroke="#00d4ff"
-              strokeWidth="0.4"
-              opacity="0.15"
-            />
-
-            {/* Ocean label */}
-            <text x="30"  y="390" fontSize="4.5" fill="#1a4a7a" opacity="0.3" fontFamily="monospace" fontWeight="bold">ARABIAN SEA</text>
-            <text x="280" y="380" fontSize="4.5" fill="#1a4a7a" opacity="0.3" fontFamily="monospace" fontWeight="bold">BAY OF BENGAL</text>
-
-            {/* Region labels */}
-            {[
-              { label: "NORTH INDIA",     x: 140, y: 70,  opacity: 0.10 },
-              { label: "WEST INDIA",      x: 62,  y: 250, opacity: 0.10 },
-              { label: "EAST INDIA",      x: 270, y: 200, opacity: 0.10 },
-              { label: "SOUTH INDIA",     x: 130, y: 370, opacity: 0.10 },
-              { label: "CENTRAL INDIA",   x: 145, y: 230, opacity: 0.08 },
-              { label: "RAJASTHAN",       x: 80,  y: 150, opacity: 0.08 },
-              { label: "DECCAN PLATEAU",  x: 150, y: 315, opacity: 0.08 },
-              { label: "NORTHEAST",       x: 315, y: 145, opacity: 0.08 },
-            ].map(({ label, x, y, opacity }) => (
-              <text key={label} x={x} y={y} fontSize="5" fill="#00d4ff"
-                opacity={opacity} textAnchor="middle" fontFamily="monospace" fontWeight="bold">
-                {label}
-              </text>
-            ))}
-
-            {/* ── ROUTES ─────────────────────────────────────────────── */}
-            {showRoutes && indiaRoutes.map((route) => {
-              const segs = routeSegments[route.id];
-              if (!segs || segs.length < 2) return null;
-              const pts = segs.map((s) => `${s.x},${s.y}`).join(" ");
-              const isHighlighted = highlightRoute === route.id;
-              return (
-                <g key={route.id}>
-                  {/* Glow shadow */}
-                  <polyline
-                    points={pts}
-                    fill="none"
-                    stroke={route.color}
-                    strokeWidth={isHighlighted ? 4 : 2.5}
-                    opacity={0.15}
-                    strokeLinejoin="round"
-                  />
-                  {/* Main track */}
-                  <polyline
-                    points={pts}
-                    fill="none"
-                    stroke={route.color}
-                    strokeWidth={isHighlighted ? 1.6 : 0.9}
-                    opacity={isHighlighted ? 1 : 0.75}
-                    strokeLinejoin="round"
-                    strokeDasharray={route.type === "ring" ? "3 1.5" : "none"}
-                    filter={isHighlighted ? "url(#glow)" : "none"}
-                    style={{ cursor: "pointer" }}
-                    onClick={() => setHighlightRoute(highlightRoute === route.id ? null : route.id)}
-                  />
-                  {/* Direction arrows along route */}
-                  {segs.slice(0, -1).map((seg, i) => {
-                    const next = segs[i + 1];
-                    const mx = (seg.x + next.x) / 2;
-                    const my = (seg.y + next.y) / 2;
-                    const angle = Math.atan2(next.y - seg.y, next.x - seg.x) * 180 / Math.PI;
-                    return (
-                      <g key={i} transform={`translate(${mx},${my}) rotate(${angle})`}>
-                        <polygon
-                          points="-1.5,-0.8 1.5,0 -1.5,0.8"
-                          fill={route.color}
-                          opacity={0.5}
-                        />
-                      </g>
-                    );
-                  })}
-                  {/* Route name label */}
-                  {showLabels && segs.length >= 2 && (() => {
-                    const mid = Math.floor(segs.length / 2);
-                    const a = segs[mid - 1] || segs[0];
-                    const b = segs[mid] || segs[1];
-                    const mx = (a.x + b.x) / 2;
-                    const my = (a.y + b.y) / 2;
-                    return (
-                      <text x={mx} y={my - 2.5} fontSize="2.2" fill={route.color}
-                        opacity="0.8" textAnchor="middle" fontFamily="monospace">
-                        {route.shortName}
-                      </text>
-                    );
-                  })()}
-                </g>
-              );
-            })}
-
-            {/* ── STATIONS ───────────────────────────────────────────── */}
-            {indiaStations.map((station) => {
-              const color = STATUS_COLOR[station.status] || "#00ff88";
-              const isSelected = selectedStation?.id === station.id;
-              const isTerminal = station.type === "terminal";
-              const isJunction = station.type === "junction";
-              const r = isTerminal ? 3.2 : isJunction ? 2.4 : 1.8;
-              return (
-                <g
-                  key={station.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedStation(isSelected ? null : station);
-                    setSelectedTrain(null);
-                  }}
-                  style={{ cursor: "pointer" }}
-                  className="no-pan"
-                >
-                  {/* Pulse ring for critical/congested */}
-                  {(station.status === "critical" || station.status === "congested") && (
-                    <>
-                      <circle cx={station.x} cy={station.y} r={r + 3}
-                        fill="none" stroke={color} strokeWidth="0.3" opacity="0.3" className="pulse-ring" />
-                      <circle cx={station.x} cy={station.y} r={r + 1.5}
-                        fill="none" stroke={color} strokeWidth="0.4" opacity="0.5" />
-                    </>
-                  )}
-                  {/* Selection ring */}
-                  {isSelected && (
-                    <circle cx={station.x} cy={station.y} r={r + 2.5}
-                      fill="none" stroke="#ffffff" strokeWidth="0.5" opacity="0.8" />
-                  )}
-                  {/* Station body */}
-                  {isTerminal ? (
-                    // Diamond for terminals
-                    <g transform={`translate(${station.x},${station.y})`}>
-                      <rect x={-r} y={-r} width={r * 2} height={r * 2}
-                        rx="0.5"
-                        fill={color} opacity={isSelected ? 1 : 0.9}
-                        stroke={isSelected ? "#fff" : color}
-                        strokeWidth={isSelected ? "0.5" : "0.2"}
-                        transform="rotate(45)"
-                        filter="url(#glow)"
-                      />
-                    </g>
-                  ) : (
-                    <circle cx={station.x} cy={station.y} r={r}
-                      fill={color} opacity={isSelected ? 1 : 0.85}
-                      stroke={isSelected ? "#fff" : color}
-                      strokeWidth={isSelected ? "0.5" : "0.2"}
-                      filter={isSelected ? "url(#glow)" : "none"}
-                    />
-                  )}
-                  {/* Inner dot */}
-                  <circle cx={station.x} cy={station.y} r={r * 0.38} fill="#050d1a" opacity="0.9" />
-
-                  {/* Station label */}
-                  {showLabels && (
-                    <>
-                      <text
-                        x={station.x}
-                        y={station.y + r + 3.2}
-                        fontSize={isTerminal ? "2.6" : isJunction ? "2.2" : "1.9"}
-                        fill={isSelected ? "#ffffff" : "#c8d8f0"}
-                        opacity={isSelected ? 1 : 0.9}
-                        textAnchor="middle"
-                        fontFamily="Inter, sans-serif"
-                        fontWeight={isTerminal ? "bold" : "normal"}
-                      >
-                        {station.name}
-                      </text>
-                      {isTerminal && (
-                        <text
-                          x={station.x}
-                          y={station.y + r + 5.8}
-                          fontSize="1.8"
-                          fill={color}
-                          opacity="0.7"
-                          textAnchor="middle"
-                          fontFamily="monospace"
-                        >
-                          [{station.shortName}]
-                        </text>
-                      )}
-                    </>
-                  )}
-
-                  {/* Delay badge */}
-                  {station.delay > 0 && (
-                    <g transform={`translate(${station.x + r + 0.5},${station.y - r - 0.5})`}>
-                      <rect x="-2" y="-2" width="8" height="4" rx="1"
-                        fill="#ff8800" opacity="0.9" />
-                      <text x="2" y="0.8" fontSize="2" fill="#050d1a"
-                        textAnchor="middle" fontFamily="monospace" fontWeight="bold">
-                        +{station.delay}m
-                      </text>
-                    </g>
-                  )}
-                </g>
-              );
-            })}
-
-            {/* ── TRAINS ─────────────────────────────────────────────── */}
-            {showTrains && filteredTrains.map((train) => {
-              const pos = getPositionOnRoute(train.route, train.progress);
-              const angle = getTrainAngle(train.route, train.progress);
-              const isSelected = selectedTrain?.id === train.id;
-              const color = TRAIN_STATUS_COLOR[train.status] || "#00ff88";
-              const route = indiaRoutes.find((r) => r.id === train.route);
-              return (
-                <g
-                  key={train.id}
-                  transform={`translate(${pos.x},${pos.y})`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedTrain(isSelected ? null : { ...train });
-                    setSelectedStation(null);
-                  }}
-                  style={{ cursor: "pointer" }}
-                  className="no-pan"
-                >
-                  {/* Speed trail */}
-                  {train.status !== "stopped" && (
-                    <ellipse
-                      cx={-Math.cos(angle * Math.PI / 180) * 3}
-                      cy={-Math.sin(angle * Math.PI / 180) * 3}
-                      rx="3" ry="1"
-                      fill={color}
-                      opacity="0.12"
-                      transform={`rotate(${angle})`}
-                    />
-                  )}
-                  {/* Selection ring */}
-                  {isSelected && (
-                    <circle r="5" fill="none" stroke={color} strokeWidth="0.5"
-                      opacity="0.7" className="pulse-ring" />
-                  )}
-                  {/* Train body */}
-                  <g transform={`rotate(${angle})`}>
-                    <rect x="-3.5" y="-1.5" width="7" height="3" rx="0.8"
-                      fill={color} opacity={isSelected ? 1 : 0.92}
-                      stroke="#050d1a" strokeWidth="0.3"
-                      filter={isSelected ? "url(#glow)" : "none"}
-                    />
-                    {/* Cabin window */}
-                    <rect x="1.5" y="-1" width="1.5" height="2" rx="0.3"
-                      fill="#050d1a" opacity="0.6" />
-                    {/* Wheels */}
-                    <circle cx="-1.5" cy="1.5" r="0.6" fill="#050d1a" opacity="0.7" />
-                    <circle cx="1"    cy="1.5" r="0.6" fill="#050d1a" opacity="0.7" />
-                  </g>
-                  {/* Train number label */}
-                  {showLabels && (
-                    <text x="0" y="-3.5" fontSize="2" fill={color}
-                      textAnchor="middle" opacity="0.9" fontFamily="monospace" fontWeight="bold">
-                      {train.number}
-                    </text>
-                  )}
-                  {/* Delay badge */}
-                  {train.delay > 0 && (
-                    <g transform="translate(4,-2)">
-                      <rect x="-1.5" y="-1.5" width="7" height="3.5" rx="0.8"
-                        fill="#ff8800" opacity="0.95" />
-                      <text x="1.5" y="0.8" fontSize="2" fill="#050d1a"
-                        textAnchor="middle" fontFamily="monospace" fontWeight="bold">
-                        +{train.delay}m
-                      </text>
-                    </g>
-                  )}
-                </g>
-              );
-            })}
-
-            {/* ── COMPASS ────────────────────────────────────────────── */}
-            <g transform="translate(375,25)">
-              <circle r="8" fill="#050d1a" stroke="#00d4ff22" strokeWidth="0.5" />
-              <text x="0" y="-4" fontSize="4" fill="#00d4ff" textAnchor="middle" opacity="0.8">N</text>
-              <text x="0" y="7"  fontSize="4" fill="#00d4ff55" textAnchor="middle">S</text>
-              <text x="-5" y="1.5" fontSize="4" fill="#00d4ff55" textAnchor="middle">W</text>
-              <text x="5"  y="1.5" fontSize="4" fill="#00d4ff55" textAnchor="middle">E</text>
-              <line x1="0" y1="-2" x2="0" y2="-6" stroke="#00d4ff" strokeWidth="0.5" />
-              <polygon points="0,-6 -1,-2 1,-2" fill="#00d4ff" opacity="0.8" />
-            </g>
-
-            {/* ── SCALE BAR ──────────────────────────────────────────── */}
-            <g transform="translate(15,400)">
-              <line x1="0" y1="0" x2="30" y2="0" stroke="#00d4ff" strokeWidth="0.5" opacity="0.5" />
-              <line x1="0" y1="-1.5" x2="0" y2="1.5" stroke="#00d4ff" strokeWidth="0.5" opacity="0.5" />
-              <line x1="30" y1="-1.5" x2="30" y2="1.5" stroke="#00d4ff" strokeWidth="0.5" opacity="0.5" />
-              <text x="15" y="-3" fontSize="3" fill="#00d4ff" textAnchor="middle" opacity="0.5">~500 km</text>
-            </g>
-          </svg>
+          {/* Leaflet map container */}
+          <div ref={mapRef} style={{ width: "100%", height: "100%", minHeight: 480, background: "#050d1a" }} />
         </div>
 
-        {/* ── RIGHT PANEL ─────────────────────────────────────────────── */}
+        {/* ── RIGHT PANEL ──────────────────────────────────────────── */}
         <div className="w-72 flex flex-col gap-3 overflow-y-auto" style={{ maxHeight: "100%" }}>
 
           {/* Selected Station */}
@@ -749,212 +561,196 @@ export default function RailwayMap() {
               <div className="space-y-2">
                 <div>
                   <div className="text-sm font-bold text-rail-accent">{selectedTrain.name}</div>
-                  <div className="text-[10px] font-mono text-rail-muted">#{selectedTrain.number}</div>
-                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                    <Badge label={selectedTrain.type} color={TRAIN_STATUS_COLOR[selectedTrain.status]} />
-                    <Badge label={selectedTrain.status.replace("-", " ")}
-                      color={TRAIN_STATUS_COLOR[selectedTrain.status]} />
+                  <div className="flex items-center gap-2 mt-1">
+                    <Badge label={selectedTrain.number} color="#00d4ff" />
+                    <Badge label={selectedTrain.type} color="#8b5cf6" />
+                    <Badge label={selectedTrain.status} color={TRAIN_STATUS_COLOR[selectedTrain.status] || "#00ff88"} />
                   </div>
+                  <div className="text-[10px] font-mono text-rail-muted mt-1">{selectedTrain.from} → {selectedTrain.to}</div>
                 </div>
-                <div className="flex items-center gap-2 text-[10px] font-mono text-rail-muted mt-1">
-                  <span className="text-rail-text">{selectedTrain.from}</span>
-                  <ArrowRight size={10} />
-                  <span className="text-rail-text">{selectedTrain.to}</span>
-                </div>
-                <div className="space-y-1">
-                  <StatRow label="Speed"
-                    value={`${selectedTrain.speed} km/h`}
-                    color={selectedTrain.speed > 100 ? "text-rail-green" : "text-rail-yellow"} />
+                <div className="space-y-1 mt-2">
+                  <StatRow label="Speed" value={`${selectedTrain.speed || 110} km/h`} />
                   <StatRow label="Delay"
-                    value={selectedTrain.delay > 0 ? `+${selectedTrain.delay} min` : "None"}
+                    value={selectedTrain.delay > 0 ? `+${selectedTrain.delay} min` : "On time"}
                     color={selectedTrain.delay > 0 ? "text-rail-yellow" : "text-rail-green"} />
-                  <StatRow label="Passengers"  value={`${selectedTrain.passengers} / ${selectedTrain.capacity}`} />
-                  <StatRow label="Cars"        value={selectedTrain.cars} />
-                  <StatRow label="Platform"    value={selectedTrain.platform} />
-                  <StatRow label="Progress"    value={`${Math.round(selectedTrain.progress * 100)}%`} />
+                  <StatRow label="Route" value={selectedTrain.route || "—"} />
                 </div>
-                <div>
-                  <div className="text-[10px] font-mono text-rail-muted mb-1">PASSENGER LOAD</div>
-                  <ProgressBar value={selectedTrain.passengers} max={selectedTrain.capacity} />
-                </div>
-                <div>
+                <div className="mt-1">
                   <div className="text-[10px] font-mono text-rail-muted mb-1">ROUTE PROGRESS</div>
-                  <ProgressBar
-                    value={Math.round(selectedTrain.progress * 100)}
-                    max={100}
-                    color="#00d4ff"
-                  />
-                </div>
-                <div className="flex gap-3 text-[10px] font-mono text-rail-muted mt-1">
-                  <div>
-                    <span className="text-rail-muted">Dep: </span>
-                    <span className="text-rail-text">{selectedTrain.scheduledDep}</span>
-                  </div>
-                  <div>
-                    <span className="text-rail-muted">Arr: </span>
-                    <span className="text-rail-text">{selectedTrain.scheduledArr}</span>
-                  </div>
+                  <ProgressBar value={Math.round((selectedTrain.progress || 0) * 100)} max={100} color="#00d4ff" />
                 </div>
               </div>
             </div>
           )}
 
-          {/* Legend */}
-          <div className="panel-border rounded-xl p-4 flex-shrink-0">
-            <h3 className="text-xs font-semibold text-white mb-3 font-mono">MAP LEGEND</h3>
+          {/* ── LEGEND ──────────────────────────────────────────────── */}
+          <div className="panel-border rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Info size={12} className="text-rail-accent" />
+              <span className="text-xs font-semibold text-white">Map Legend</span>
+            </div>
+
             <div className="space-y-3">
               <div>
-                <div className="text-[9px] font-mono text-rail-muted uppercase tracking-wider mb-1.5">STATION STATUS</div>
-                <div className="grid grid-cols-2 gap-1">
+                <div className="text-[9px] font-mono text-rail-muted uppercase tracking-wider mb-1.5">Station Status</div>
+                <div className="flex flex-wrap gap-2">
                   {[
-                    { color: "#00ff88", label: "Normal" },
-                    { color: "#ffcc00", label: "Warning" },
-                    { color: "#ff8800", label: "Congested" },
-                    { color: "#ff4444", label: "Critical" },
-                  ].map(({ color, label }) => (
-                    <div key={label} className="flex items-center gap-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }} />
-                      <span className="text-[10px] text-rail-text">{label}</span>
+                    { label: "Normal",    color: "#00ff88" },
+                    { label: "Warning",   color: "#ffcc00" },
+                    { label: "Congested", color: "#ff8800" },
+                    { label: "Critical",  color: "#ff4444" },
+                  ].map(({ label, color }) => (
+                    <div key={label} className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full" style={{ background: color }} />
+                      <span className="text-[9px] font-mono text-rail-muted">{label}</span>
                     </div>
                   ))}
                 </div>
               </div>
+
               <div>
-                <div className="text-[9px] font-mono text-rail-muted uppercase tracking-wider mb-1.5">STATION TYPE</div>
-                <div className="space-y-1">
-                  <div className="flex items-center gap-1.5">
-                    <svg width="12" height="12" viewBox="-4 -4 8 8">
-                      <rect x="-2.5" y="-2.5" width="5" height="5" rx="0.4" fill="#00ff88" transform="rotate(45)" />
+                <div className="text-[9px] font-mono text-rail-muted uppercase tracking-wider mb-1.5">Station Type</div>
+                <div className="flex flex-wrap gap-3">
+                  <div className="flex items-center gap-1">
+                    <svg width="8" height="8" viewBox="-4 -4 8 8">
+                      <rect x="-3" y="-3" width="6" height="6" rx="0.8" fill="#00d4ff" transform="rotate(45)" />
                     </svg>
-                    <span className="text-[10px] text-rail-text">Terminal</span>
+                    <span className="text-[9px] font-mono text-rail-muted">Terminal</span>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <svg width="12" height="12" viewBox="-4 -4 8 8">
-                      <circle r="2.5" fill="#00ff88" />
+                  <div className="flex items-center gap-1">
+                    <svg width="8" height="8" viewBox="-4 -4 8 8">
+                      <circle cx="0" cy="0" r="3" fill="#00d4ff" />
                     </svg>
-                    <span className="text-[10px] text-rail-text">Junction / Suburban</span>
+                    <span className="text-[9px] font-mono text-rail-muted">Junction</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <svg width="8" height="8" viewBox="-4 -4 8 8">
+                      <circle cx="0" cy="0" r="2" fill="#00d4ff" />
+                    </svg>
+                    <span className="text-[9px] font-mono text-rail-muted">Suburban</span>
                   </div>
                 </div>
               </div>
+
               <div>
-                <div className="text-[9px] font-mono text-rail-muted uppercase tracking-wider mb-1.5">TRAIN STATUS</div>
-                <div className="space-y-1">
+                <div className="text-[9px] font-mono text-rail-muted uppercase tracking-wider mb-1.5">Train Status</div>
+                <div className="flex flex-wrap gap-2">
                   {[
-                    { color: "#00ff88", label: "On Time" },
-                    { color: "#ffcc00", label: "Delayed" },
-                    { color: "#ff4444", label: "Stopped" },
-                  ].map(({ color, label }) => (
-                    <div key={label} className="flex items-center gap-1.5">
-                      <svg width="18" height="8" viewBox="-9 -4 18 8">
-                        <rect x="-7" y="-3" width="14" height="6" rx="1.5" fill={color} />
+                    { label: "On Time", color: "#00ff88" },
+                    { label: "Delayed", color: "#ffcc00" },
+                    { label: "Stopped", color: "#ff4444" },
+                  ].map(({ label, color }) => (
+                    <div key={label} className="flex items-center gap-1">
+                      <svg width="8" height="8" viewBox="-4 -4 8 8">
+                        <rect x="-2" y="-2" width="4" height="4" rx="0.5" fill={color} />
                       </svg>
-                      <span className="text-[10px] text-rail-text">{label}</span>
+                      <span className="text-[9px] font-mono text-rail-muted">{label}</span>
                     </div>
                   ))}
                 </div>
               </div>
+
               <div>
-                <div className="text-[9px] font-mono text-rail-muted uppercase tracking-wider mb-1.5">TRAIN TYPES</div>
-                <div className="grid grid-cols-2 gap-1">
+                <div className="text-[9px] font-mono text-rail-muted uppercase tracking-wider mb-1.5">Train Types</div>
+                <div className="flex flex-wrap gap-1.5">
                   {Object.entries(TYPE_ICON).map(([type, icon]) => (
-                    <div key={type} className="flex items-center gap-1">
-                      <span className="text-[11px]">{icon}</span>
-                      <span className="text-[10px] text-rail-text">{type}</span>
-                    </div>
+                    <span key={type} className="text-[9px] font-mono text-rail-muted">{icon} {type}</span>
                   ))}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Route List */}
-          <div className="panel-border rounded-xl p-4 flex-shrink-0">
-            <h3 className="text-xs font-semibold text-white mb-3 font-mono">CORRIDORS</h3>
-            <div className="space-y-1.5">
+          {/* ── CORRIDORS ──────────────────────────────────────────── */}
+          <div className="panel-border rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Activity size={12} className="text-rail-accent" />
+              <span className="text-xs font-semibold text-white">Railway Corridors</span>
+            </div>
+            <div className="space-y-1">
               {indiaRoutes.map((route) => {
-                const segs = routeSegments[route.id] || [];
-                const trainCount = trainPositions.filter((t) => t.route === route.id).length;
+                const isHL = highlightRoute === route.id;
                 return (
-                  <button
+                  <div
                     key={route.id}
-                    onClick={() => setHighlightRoute(highlightRoute === route.id ? null : route.id)}
-                    className={`w-full flex items-center gap-2 p-2 rounded-lg text-left transition-colors ${
-                      highlightRoute === route.id
-                        ? "bg-rail-accent/10 border border-rail-accent/30"
-                        : "hover:bg-white/5 border border-transparent"
-                    }`}
+                    onClick={() => setHighlightRoute(isHL ? null : route.id)}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors hover:bg-white/[0.03]"
+                    style={{ background: isHL ? route.color + "11" : "transparent" }}
                   >
-                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: route.color }} />
-                    <span className="flex-1 text-[10px] font-mono text-rail-text truncate">{route.shortName}</span>
-                    <span className="text-[9px] font-mono text-rail-muted">{trainCount}T</span>
-                    <span className="text-[9px] font-mono text-rail-muted">{segs.length - 1}seg</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Live Train List */}
-          <div className="panel-border rounded-xl p-4 flex-shrink-0">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-semibold text-white font-mono">LIVE TRAINS</h3>
-              <span className="text-[9px] font-mono text-rail-green animate-pulse">● LIVE</span>
-            </div>
-            <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
-              {trainPositions.map((train) => {
-                const color = TRAIN_STATUS_COLOR[train.status];
-                return (
-                  <button
-                    key={train.id}
-                    onClick={() => {
-                      setSelectedTrain(selectedTrain?.id === train.id ? null : { ...train });
-                      setSelectedStation(null);
-                    }}
-                    className={`w-full flex items-center gap-2 p-2 rounded-lg text-left transition-colors ${
-                      selectedTrain?.id === train.id
-                        ? "bg-rail-accent/10 border border-rail-accent/30"
-                        : "hover:bg-white/5 border border-transparent"
-                    }`}
-                  >
-                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
+                    <span className="w-2.5 h-0.5 rounded-full flex-shrink-0" style={{ background: route.color }} />
                     <div className="flex-1 min-w-0">
-                      <div className="text-[10px] font-mono text-rail-text truncate">{train.name}</div>
-                      <div className="text-[9px] font-mono text-rail-muted">#{train.number} · {train.type}</div>
+                      <div className="text-[10px] font-mono text-rail-text truncate">{route.shortName}</div>
+                      <div className="text-[8px] font-mono text-rail-muted truncate">{route.from} → {route.to}</div>
                     </div>
-                    <div className="text-right flex-shrink-0">
-                      <div className="text-[10px] font-mono" style={{ color }}>
-                        {train.delay > 0 ? `+${train.delay}m` : "On Time"}
-                      </div>
-                      <div className="text-[9px] font-mono text-rail-muted">{train.speed} km/h</div>
-                    </div>
-                  </button>
+                    <span className="text-[8px] font-mono text-rail-muted flex-shrink-0">{route.via?.length || 0} segs</span>
+                  </div>
                 );
               })}
             </div>
           </div>
 
-          {/* Alerts Panel */}
-          <div className="panel-border rounded-xl p-4 flex-shrink-0">
+          {/* ── LIVE TRAINS ─────────────────────────────────────────── */}
+          <div className="panel-border rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-semibold text-white font-mono">LIVE ALERTS</h3>
-              <span className="text-[9px] font-mono text-rail-red">{liveAlerts.length} ACTIVE</span>
+              <div className="flex items-center gap-2">
+                <Train size={12} className="text-rail-accent" />
+                <span className="text-xs font-semibold text-white">Live Trains</span>
+              </div>
+              <button onClick={() => setShowTrains((v) => !v)}
+                className="text-[9px] font-mono px-2 py-0.5 rounded bg-rail-card border border-rail-border text-rail-muted hover:text-rail-accent transition-colors">
+                {showTrains ? "HIDE" : "SHOW"}
+              </button>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1 max-h-48 overflow-y-auto">
+              {filteredTrains.slice(0, 30).map((train) => {
+                const isSelected = selectedTrain?.id === train.id;
+                const color = TRAIN_STATUS_COLOR[train.status] || "#00ff88";
+                const typeIcon = TYPE_ICON[train.type] || "🚆";
+                return (
+                  <div
+                    key={train.id}
+                    onClick={() => setSelectedTrain(isSelected ? null : { ...train })}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors hover:bg-white/[0.03]"
+                    style={{ background: isSelected ? color + "11" : "transparent" }}
+                  >
+                    <span className="flex-shrink-0">{typeIcon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[10px] font-mono text-rail-text truncate">{train.number} {train.name}</div>
+                      <div className="text-[8px] font-mono text-rail-muted truncate">{train.from} → {train.to}</div>
+                    </div>
+                    <span className="text-[9px] font-mono flex-shrink-0" style={{ color }}>
+                      {train.speed || 110} km/h
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── LIVE ALERTS ─────────────────────────────────────────── */}
+          <div className="panel-border rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Bell size={12} className="text-rail-accent" />
+              <span className="text-xs font-semibold text-white">Live Alerts</span>
+            </div>
+            <div className="space-y-1.5">
               {liveAlerts.map((alert) => (
                 <div key={alert.id}
-                  className="p-2 rounded-lg text-[10px] font-mono"
-                  style={{
-                    background: ALERT_COLOR[alert.severity] + "11",
-                    borderLeft: `2px solid ${ALERT_COLOR[alert.severity]}`,
-                  }}
+                  className="flex items-start gap-2 px-2 py-1.5 rounded-lg border"
+                  style={{ borderColor: ALERT_COLOR[alert.severity] + "33", background: ALERT_COLOR[alert.severity] + "08" }}
                 >
-                  <div className="flex items-center justify-between mb-0.5">
-                    <span className="font-bold uppercase text-[9px]" style={{ color: ALERT_COLOR[alert.severity] }}>
-                      {alert.severity} · {alert.type}
-                    </span>
-                    <span className="text-rail-muted text-[9px]">{alert.time}</span>
+                  <AlertTriangle size={10} style={{ color: ALERT_COLOR[alert.severity] }} className="mt-0.5 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[8px] font-mono uppercase px-1 py-0.5 rounded"
+                        style={{ background: ALERT_COLOR[alert.severity] + "22", color: ALERT_COLOR[alert.severity] }}>
+                        {alert.severity}
+                      </span>
+                      <span className="text-[8px] font-mono text-rail-muted">{alert.type}</span>
+                    </div>
+                    <div className="text-[9px] font-mono text-rail-text mt-0.5 truncate">{alert.message}</div>
+                    <div className="text-[8px] font-mono text-rail-muted mt-0.5">{alert.time}</div>
                   </div>
-                  <div className="text-rail-text leading-relaxed">{alert.message}</div>
                 </div>
               ))}
             </div>
