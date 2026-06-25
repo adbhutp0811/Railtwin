@@ -1,117 +1,105 @@
-# 🚀 INSTA — Private ID Intelligence
+# RailTwin AI
 
-<p align="center">
-  <img src="https://upload.wikimedia.org/wikipedia/commons/a/a5/Instagram_icon.png" width="180">
-</p>
+**Predictive Digital Twin Dashboard for Indian Railway Operations**
 
-<p align="center">
-  <b>PRIVATE ID INTELLIGENCE</b><br>
-  Futuristic Instagram Reconnaissance Utility
-</p>
+A dark-themed, single-page application that simulates real-time monitoring, forecasting, and decision-support for the New Delhi railway network. Built with React, featuring interactive maps, AI-powered delay/congestion predictions, what-if simulation engine, and a conversational AI copilot.
 
-<p align="center">
-  <img src="https://img.shields.io/badge/OS-Linux-blue?style=for-the-badge">
-  <img src="https://img.shields.io/badge/Python-3.x-yellow?style=for-the-badge">
-  <img src="https://img.shields.io/badge/CLI-SciFi-green?style=for-the-badge">
-  <img src="https://img.shields.io/badge/Instagram-Intelligence-red?style=for-the-badge">
-</p>
+## Features
 
----
+- **Overview Dashboard** — Live KPIs, delay/passenger charts, corridor risk assessment, AI predictions, weather widget, alert ticker
+- **Delhi Railway Map** — Interactive Leaflet map with stations, routes, and animated train markers across India
+- **Delay Prediction** — AI-powered delay forecasting with model selection (XGBoost / LSTM / RF), feature importance, and weather impact analysis
+- **Congestion Prediction** — Station congestion monitoring with radial gauges, passenger flow charts, and AI recommendations
+- **Simulation Engine** — What-if scenario simulator for disruptions (rainfall, platform conflict, maintenance, equipment failure) with cascade impact analysis
+- **Weather Dashboard** — Full OpenWeatherMap integration: current conditions, 72-hour forecast, per-station weather grid, AQI, alerts, seasonal calendar
+- **AI Copilot** — Conversational assistant with 50+ query patterns, rich responses (tables, charts, metrics, alerts), and live weather context
 
-# ⚡ ABOUT
+## Tech Stack
 
-**INSTA** is a futuristic command-line reconnaissance utility for **Private ID Intelligence** with a sleek sci-fi styled interface.
+| Category | Technology |
+|----------|-----------|
+| Framework | React 18, Vite 5 |
+| Routing | React Router v6 |
+| Styling | Tailwind CSS v3 |
+| Charts | Recharts |
+| Maps | Leaflet 1.9 (CartoDB dark tiles) |
+| Icons | Lucide React |
+| Weather | OpenWeatherMap API |
+| Animation | Framer Motion |
+| Utility | clsx |
+| Deployment | Vercel / Render |
 
----
-# 🧠 FEATURES
+## Getting Started
 
-* 🎯 Target Instagram accounts directly from CLI
-* ⚡ Fast API-powered intelligence retrieval
-* 🔍 Detects exposed information from Instagram API responses
-* 🛰️ Futuristic sci-fi terminal animations
-* 💻 Lightweight standalone executable binary
-* 🧪 Optimized for Linux environments
-* 🚀 Quick single-command execution
+### Prerequisites
 
----
+- Node.js >= 18.0.0
+- npm >= 9.0.0
 
-# ⚠️ WARNING NOTE
-
-* Avoid excessive or repeated usage in a short time period.
-* If you encounter errors such as `chaining results`, wait for some time before retrying.
-* In some cases, errors may simply indicate that the target user's data is not publicly exposed or leaked yet.
-* Rate limiting or temporary API restrictions may also cause intermittent failures.
-
-
-# 📦 INSTALLATION
-
-## ⚡ One-Line Install
+### Install
 
 ```bash
-curl -L "https://github.com/J0K3R-x-Anarchy/Insta-private-connections/releases/download/bin/insta-leak" -o insta && chmod +x insta && sudo mv insta /usr/local/bin/insta
-
+npm install
 ```
 
----
-
-# 🚀 USAGE
+### Development
 
 ```bash
-insta username
+npm run dev
 ```
 
-## Example
+Opens at `http://localhost:5173`.
+
+### Build
 
 ```bash
-insta target_user
+npm run build
 ```
 
----
+### Preview
 
-# 🛰️ SCREENSHOT
-
-```text
-██╗███╗   ██╗███████╗████████╗ █████╗ 
-██║████╗  ██║██╔════╝╚══██╔══╝██╔══██╗
-██║██╔██╗ ██║███████╗   ██║   ███████║
-██║██║╚██╗██║╚════██║   ██║   ██╔══██║
-██║██║ ╚████║███████║   ██║   ██║  ██║
-╚═╝╚═╝  ╚═══╝╚══════╝   ╚═╝   ╚═╝  ╚═╝
-
-[+] Connecting to Instagram Node...
-[+] Fetching Intelligence...
-[+] Decrypting Metadata...
-[+] DATA ACQUIRED
+```bash
+npm run preview
 ```
 
----
+## Project Structure
 
-# ⚠️ DISCLAIMER
+```
+src/
+├── main.jsx                # App entry point
+├── App.jsx                 # Root layout with routing
+├── index.css               # Global styles
+├── components/             # Reusable UI components
+│   ├── Sidebar.jsx
+│   ├── topBar.jsx
+│   ├── SectionHeader.jsx
+│   ├── MetricCard.jsx
+│   └── RiskBadge.jsx
+├── pages/                  # Page-level components
+│   ├── Dashboard.jsx
+│   ├── RailwayMap.jsx
+│   ├── DelayPrediction.jsx
+│   ├── CongestionPrediction.jsx
+│   ├── SimulationEngine.jsx
+│   ├── WeatherDashboard.jsx
+│   └── AICopilot.jsx
+├── context/                # React context providers
+│   └── WeatherContext.jsx
+├── hooks/                  # Custom hooks
+│   └── useWeather.js
+└── data/                   # Static data files
+    ├── railwayData.js
+    ├── delhiRailwayData.js
+    ├── indiaMapData.js
+    └── copilotKnowledge.js
+```
 
-This tool is intended strictly for:
+## Configuration
 
-* Educational purposes
-* Ethical security research
-* Authorized testing environments
+- **Weather API** — Add your OpenWeatherMap API key in `src/hooks/useWeather.js` (replace `4e248af...` with your own key)
+- **Deployment** — `vercel.json` for Vercel, `render.yaml` for Render
+- **Vite** — Configured in `vite.config.js` (host `0.0.0.0:5173`)
 
-Users are responsible for complying with all applicable laws and platform terms of service.
+## License
 
----
-
-# 👨‍💻 AUTHOR
-
-Developed with ☕ and terminal aesthetics.
-
-> “Recon first. Exploit later.”
-
----
-
-# ⭐ SUPPORT
-
-If you like the project:
-
-* ⭐ Star the repository
-* 🍴 Fork it
-* 🛰️ Share with researchers
-
----
+MIT
